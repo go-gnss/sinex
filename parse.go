@@ -4,6 +4,8 @@ import (
 	"bufio"
 	"fmt"
 	"io"
+	"strconv"
+	"strings"
 )
 
 // TODO: What should this struct contain?
@@ -15,26 +17,24 @@ type File struct {
 
 func Parse(r io.Reader) (file File, err error) {
 	br := bufio.NewReader(r)
-	if err = parseHeader(br); err != nil {
-		// First line must be header
-		return file, err
-	}
 
 	file = File{Comments: []string{}, Blocks: map[string][]string{}}
 
-	char, err := br.ReadByte()
-	for ; err == nil; char, err = br.ReadByte() {
-		switch char {
-		case '*':
-			// TODO: Store comment line
+	// First line must be header
+	if err = parseHeader(br, &file); err != nil {
+		return file, err
+	}
+
+	line, err := readLine(br, &file)
+	for ; err == nil; line, err = readLine(br, &file) {
+		switch line[0] {
 		case '+':
-			if err = parseBlock(br, &file); err != nil {
+			if err = parseBlock(line[1:], br, &file); err != nil {
 				break
 			}
 		case '%':
-			// %ENDSNX<EOF>
-			line, _, err := br.ReadLine()
-			if err == nil && string(line) != "ENDSNX" {
+			// %ENDSNX<EOF> - Not sure why the LF is present
+			if line != "%ENDSNX\n" {
 				err = fmt.Errorf("invalid trailer line")
 			}
 			// TODO: Also check if the next read yields io.EOF?
@@ -46,20 +46,41 @@ func Parse(r io.Reader) (file File, err error) {
 	return file, err
 }
 
+func readLine(br *bufio.Reader, file *File) (line string, err error) {
+	line, err = br.ReadString('\n')
+	if err != nil {
+		return line, err
+	}
+
+	if line[0] == '*' {
+		file.Comments = append(file.Comments, line[1:])
+		return readLine(br, file)
+	}
+
+	return line, err
+}
+
 // TODO: Return header type or something
 // "%=SNX " + F4.2 + " " + A3 + " " + I2:I3:I5 + I2:I3:I5 + " " + A1 + " " + I5 + " " + A1 + 6(" " + A1)
-func parseHeader(br *bufio.Reader) error {
+func parseHeader(br *bufio.Reader, file *File) error {
 	header, err := br.ReadString('\n')
 	if err != nil {
 		return err
 	}
 
-	// TODO: Actually parse header line
-	if header[:5] != "%=SNX" {
+	fields := strings.Split(header, " ")
+	if len(fields) < 10 {
 		return fmt.Errorf("invalid header line")
 	}
 
-	return nil
+	if fields[0] != "%=SNX" {
+		return fmt.Errorf("invalid header line")
+	}
+
+	version, err := strconv.ParseFloat(fields[1], 32)
+	file.Version = float32(version)
+
+	return err
 }
 
 // The following blocks are defined:
@@ -91,17 +112,12 @@ func parseHeader(br *bufio.Reader) error {
 //  SOLUTION/NORMAL_EQUATION_MATRIX {p}
 //    Where: {p} L or U
 //           {type} CORR or COVA or INFO
-func parseBlock(br *bufio.Reader, file *File) error {
-	block, err := br.ReadString('\n')
-	if err != nil {
-		return err
-	}
-
+func parseBlock(block string, br *bufio.Reader, file *File) error {
 	// TODO: Check if block type is valid
 	file.Blocks[block] = []string{} // TODO: Check if block redeclared
 
 	for {
-		line, err := parseLine(br, file)
+		line, err := readLine(br, file)
 		if err != nil {
 			return err // Wrap error in some context
 		}
@@ -112,18 +128,4 @@ func parseBlock(br *bufio.Reader, file *File) error {
 
 		file.Blocks[block] = append(file.Blocks[block], line)
 	}
-}
-
-func parseLine(br *bufio.Reader, file *File) (line string, err error) {
-	line, err = br.ReadString('\n')
-	if err != nil {
-		return line, err
-	}
-
-	if line[0] == '*' {
-		file.Comments = append(file.Comments, line[1:])
-		return parseLine(br, file)
-	}
-
-	return line, err
 }
