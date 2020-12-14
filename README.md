@@ -1,2 +1,1 @@
-# sinex
-Go SINEX Parser
+WIP Go SINEX Parser
